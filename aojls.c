@@ -936,12 +936,13 @@ json_token_t* create_token_stream(aojls_deserialization_prefs* prefs, size_t* co
 	size_t numtokens = 0;
 	size_t bflen = 32;
 	json_token_t* tbuf = (json_token_t*)malloc(sizeof(json_token_t)*bflen);
+	string_buffer_data_t* data = NULL;
 	if (tbuf == NULL) {
 		goto memerror;
 	}
 	char ib[1];
 	long readc = prefs->reader(ib, 1, prefs->reader_data);
-	string_buffer_data_t* data = (string_buffer_data_t*)calloc(1, sizeof(string_buffer_data_t));
+	data = (string_buffer_data_t*)calloc(1, sizeof(string_buffer_data_t));
 	if (data == NULL) {
 		goto memerror;
 	}
