@@ -34,6 +34,7 @@ int main() {
 
 	char* result = aojls_serialize((json_value_t*)root, &p);
 	printf(result);
+	free(result);
 
 	printf("\n\n");
 
@@ -41,5 +42,13 @@ int main() {
 	result = aojls_serialize((json_value_t*)root, &p);
 	printf(result);
 
+	aojls_deserialization_prefs dp;
+	memset(&dp, 0, sizeof(aojls_deserialization_prefs));
+
+	aojls_ctx_t* ctx2 = aojls_deserialize(result, strlen(result), &dp);
+	json_value_t* rr = json_context_get_result(ctx2);
+
 	json_free_context(ctx);
+	json_free_context(ctx2);
+	free(result);
 }

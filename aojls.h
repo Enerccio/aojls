@@ -88,6 +88,7 @@ json_null* json_make_null(aojls_ctx_t* ctx);
 
 aojls_ctx_t* json_make_context();
 bool json_context_error_happened(aojls_ctx_t* ctx);
+json_value_t* json_context_get_result(aojls_ctx_t* ctx);
 void json_free_context(aojls_ctx_t* ctx);
 
 /* Serialization */
@@ -108,3 +109,15 @@ typedef struct {
 char* aojls_serialize(json_value_t* value, aojls_serialization_prefs* prefs);
 
 /* Deserialization */
+
+typedef long(*reader_function_t)(char* buffer, size_t len, void* reader_data);
+
+typedef struct {
+	reader_function_t reader;
+	void* reader_data;
+	aojls_ctx_t* ctx;
+
+	const char* error;
+} aojls_deserialization_prefs;
+
+aojls_ctx_t* aojls_deserialize(char* source, size_t len, aojls_deserialization_prefs* prefs);

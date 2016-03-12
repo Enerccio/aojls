@@ -152,7 +152,7 @@ static char* append_string(aojls_ctx_t* ctx, char* string, size_t len) {
 		return NULL;
 	}
 	cpy[len] = '\0';
-	char_node_t* cnode = (char_node_t*)malloc(sizeof(char_node_t));
+	char_node_t* cnode = (char_node_t*)calloc(1, sizeof(char_node_t));
 	if (cnode == NULL) {
 		free(cpy);
 		ctx->failed = true;
@@ -565,6 +565,12 @@ bool json_context_error_happened(aojls_ctx_t* ctx) {
 	return ctx->failed;
 }
 
+json_value_t* json_context_get_result(aojls_ctx_t* ctx) {
+	if (ctx == NULL)
+		return NULL;
+	return ctx->result;
+}
+
 void json_free_context(aojls_ctx_t* ctx) {
 	if (ctx == NULL)
 		return;
@@ -573,6 +579,19 @@ void json_free_context(aojls_ctx_t* ctx) {
 	while (anode != NULL) {
 		_aojls_alloc_node_t* node = anode;
 		anode = node->next;
+
+		json_value_t* v = (json_value_t*)node;
+		if (v->type == JS_OBJECT || v->type == JS_ARRAY) {
+			if (v->type == JS_OBJECT) {
+				json_object* o = json_as_object(v);
+				free(o->keys);
+				free(o->values);
+			} else {
+				json_array* a = json_as_array(v);
+				free(a->elements);
+			}
+		}
+
 		free(node);
 	}
 
@@ -593,18 +612,21 @@ typedef struct {
 	char* data;
 	size_t offset;
 	size_t len;
-} string_writer_data_t;
+} string_buffer_data_t;
 
 static bool string_writer_function(const char* buffer, size_t len, void* writer_data) {
-	string_writer_data_t* wd = (string_writer_data_t*)writer_data;
+	string_buffer_data_t* wd = (string_buffer_data_t*)writer_data;
 
 	if (wd->offset + len >= wd->len) {
-		char* rb = (char*)realloc(wd->data, wd->len*2);
+		size_t addendum = wd->len*2;
+		if (addendum == 0)
+			addendum = 2048;
+		char* rb = (char*)realloc(wd->data, addendum);
 		if (rb == NULL) {
 			return false;
 		}
 		wd->data = rb;
-		wd->len *= 2;
+		wd->len = addendum;
 		return string_writer_function(buffer, len, writer_data);
 	}
 
@@ -788,12 +810,13 @@ static bool serialize(json_value_t* value, aojls_serialization_prefs* prefs) {
 			eol = "\n";
 		else
 			eol = prefs->eol;
-		perlinsert = (char*)malloc(prefs->offset_per_level * sizeof(char));
+		perlinsert = (char*)malloc((prefs->offset_per_level)+1 * sizeof(char));
 		if (perlinsert == NULL) {
 			return false;
 		}
 		for (size_t i=0; i<prefs->offset_per_level; i++)
 			perlinsert[i] = ' ';
+		perlinsert[prefs->offset_per_level] = '\0';
 	}
 	bool r = true;
 
@@ -819,7 +842,7 @@ char* aojls_serialize(json_value_t* value, aojls_serialization_prefs* prefs) {
 	if (p.writer == NULL) {
 		selfbuffer = true;
 		p.writer = string_writer_function;
-		string_writer_data_t* wd = (string_writer_data_t*)malloc(sizeof(string_writer_data_t));
+		string_buffer_data_t* wd = (string_buffer_data_t*)malloc(sizeof(string_buffer_data_t));
 		if (wd == NULL) {
 			p.success = false;
 			return NULL;
@@ -839,16 +862,465 @@ char* aojls_serialize(json_value_t* value, aojls_serialization_prefs* prefs) {
 	bool result = serialize(value, &p);
 
 	if ((!result && selfbuffer) || (!p.writer("\0", 1, p.writer_data) && selfbuffer)) {
-		free(((string_writer_data_t*)p.writer_data)->data);
+		free(((string_buffer_data_t*)p.writer_data)->data);
 		free(p.writer_data);
 		return NULL;
 	}
 
 	if (selfbuffer) {
-		char* buffer = ((string_writer_data_t*)p.writer_data)->data;
+		char* buffer = ((string_buffer_data_t*)p.writer_data)->data;
 		free(p.writer_data);
 		return buffer;
 	}
 
 	return NULL;
+}
+
+// Deserializer
+
+long string_reader_function(char* buffer, size_t len, void* reader_data) {
+	string_buffer_data_t* rd = (string_buffer_data_t*)reader_data;
+	if (rd == NULL || rd->data == NULL) {
+		return -1;
+	} else if (rd->offset >= rd->len) {
+		return 0;
+	}
+
+	size_t readsiz = len >= rd->len - rd->offset ?
+			rd->len - rd->offset : len;
+	memcpy(buffer, rd->data+rd->offset, readsiz);
+	rd->offset += readsiz;
+	return readsiz;
+}
+
+typedef enum {
+	LEFT_CURLY, RIGHT_CURLY,
+	LEFT_SQUARE, RIGHT_SQUARE,
+	STRING, COMMA, COLON, DOT,
+	PLUS, MINUS, DIGIT, E,
+	_TRUE, _FALSE, _NULL
+} json_token_type_t;
+
+typedef struct {
+	char* value;
+	size_t len;
+	json_token_type_t type;
+} json_token_t;
+
+bool append_token(json_token_t** tbuf, size_t* bflen, size_t* n,
+		char* data, size_t len, json_token_type_t type) {
+	size_t bfl = *bflen;
+	size_t nn = *n;
+
+	if (bfl == nn) {
+		size_t nl = bfl * 2;
+		json_token_t* nt = (json_token_t*)realloc(*tbuf, sizeof(json_token_t)*nl);
+		if (nt == NULL) {
+			return false;
+		}
+		*tbuf = nt;
+		*bflen = nl;
+	}
+
+	json_token_t* t = *tbuf;
+	json_token_t* token = &t[*n];
+	*n += 1;
+
+	token->type = type;
+	token->len = len;
+	token->value = data;
+	return true;
+}
+
+json_token_t* create_token_stream(aojls_deserialization_prefs* prefs, size_t* count) {
+	size_t numtokens = 0;
+	size_t bflen = 32;
+	json_token_t* tbuf = (json_token_t*)malloc(sizeof(json_token_t)*bflen);
+	if (tbuf == NULL) {
+		goto memerror;
+	}
+	char ib[1];
+	long readc = prefs->reader(ib, 1, prefs->reader_data);
+	string_buffer_data_t* data = (string_buffer_data_t*)calloc(1, sizeof(string_buffer_data_t));
+	if (data == NULL) {
+		goto memerror;
+	}
+
+	bool in_string = false;
+	bool escaped = false;
+
+	size_t truep = 0;
+	size_t falsep = 0;
+	size_t nullp = 0;
+
+	while (true) {
+		if (readc < 0) {
+			prefs->error = "tokenstream: failed to read data";
+			goto cleanup;
+		}
+
+		if (truep == 4) {
+			if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, _TRUE)) {
+				goto memerror;
+			}
+			truep = 0;
+		}
+
+		if (falsep ==5) {
+			if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, _FALSE)) {
+				goto memerror;
+			}
+			falsep = 0;
+		}
+
+		if (nullp == 4) {
+			if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, _NULL)) {
+				goto memerror;
+			}
+			nullp = 0;
+		}
+
+		if (readc == 0) {
+			// TODO: finish token
+			if (in_string || escaped) {
+				prefs->error = "tokenstream: eof in the middle of a token";
+				goto cleanup;
+			}
+			break;
+		}
+
+		char current = ib[0];
+		readc = prefs->reader(ib, 1, prefs->reader_data);
+
+		if (in_string) {
+			if (!escaped && current == '"') {
+				in_string = false;
+				if (!append_token(&tbuf, &bflen, &numtokens, data->data, data->offset, STRING)) {
+					goto memerror;
+				}
+				free(data);
+				data = (string_buffer_data_t*)calloc(1, sizeof(string_buffer_data_t));
+				if (data == NULL) {
+					goto memerror;
+				}
+			} else {
+				if (escaped) {
+					switch (current) {
+					case 'b': current = '\b'; break;
+					case 'f': current = '\f'; break;
+					case 'n': current = '\n'; break;
+					case 'r': current = '\r'; break;
+					case 't': current = '\t'; break;
+					case '"': current = '"'; break;
+					case '/': current = '/'; break;
+					case 'u':
+						if (!string_writer_function("\\", 1, data)) {
+							goto memerror;
+						}
+						break;
+					case '\\': current = '\\'; break;
+					default:
+						prefs->error = "tokenstream: unknown escape sequence";
+						goto cleanup;
+					}
+				} else if (current == '\\') {
+					escaped = true;
+					continue;
+				}
+				if (!string_writer_function(&current, 1, data)) {
+					goto memerror;
+				}
+				escaped = false;
+			}
+		} else {
+			switch (current) {
+			case 0x20:
+			case 0x09:
+			case 0x0A:
+			case 0x0D:
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got whitespace";
+					goto cleanup;
+				}
+				break;
+
+			case 'e':
+				if (falsep == 4) {
+					++falsep;
+					break;
+				} else if (truep == 3) {
+					++truep;
+					break;
+				}
+				/* no break */
+			case 'E':
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got e/E instead";
+					goto cleanup;
+				}
+
+				if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, E)) {
+					goto memerror;
+				}
+				break;
+			case '0':
+			case '1':
+			case '2':
+			case '3':
+			case '4':
+			case '5':
+			case '6':
+			case '7':
+			case '8':
+			case '9':
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got digit instead";
+					goto cleanup;
+				}
+
+				char* str = malloc(sizeof(char));
+				if (str == NULL) {
+					goto memerror;
+				}
+
+				str[0] = current;
+
+				if (!append_token(&tbuf, &bflen, &numtokens, str, 1, DIGIT)) {
+					goto memerror;
+				}
+				break;
+			case '"':
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got \" instead";
+					goto cleanup;
+				}
+
+				in_string = true;
+				break;
+			case '{':
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got { instead";
+					goto cleanup;
+				}
+
+				if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, LEFT_CURLY)) {
+					goto memerror;
+				}
+				break;
+			case '}':
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got } instead";
+					goto cleanup;
+				}
+
+				if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, RIGHT_CURLY)) {
+					goto memerror;
+				}
+				break;
+			case '[':
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got [ instead";
+					goto cleanup;
+				}
+
+				if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, LEFT_SQUARE)) {
+					goto memerror;
+				}
+				break;
+			case ']':
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got ] instead";
+					goto cleanup;
+				}
+
+				if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, RIGHT_SQUARE)) {
+					goto memerror;
+				}
+				break;
+			case '+':
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got + instead";
+					goto cleanup;
+				}
+
+				if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, PLUS)) {
+					goto memerror;
+				}
+				break;
+			case '-':
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got - instead";
+					goto cleanup;
+				}
+
+				if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, MINUS)) {
+					goto memerror;
+				}
+				break;
+			case '.':
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got . instead";
+					goto cleanup;
+				}
+
+
+				if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, DOT)) {
+					goto memerror;
+				}
+				break;
+			case ':':
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got : instead";
+					goto cleanup;
+				}
+
+				if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, COLON)) {
+					goto memerror;
+				}
+				break;
+			case ',':
+				if (falsep > 0 || truep > 0 || nullp > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got , instead";
+					goto cleanup;
+				}
+
+				if (!append_token(&tbuf, &bflen, &numtokens, NULL, 0, COMMA)) {
+					goto memerror;
+				}
+				break;
+			case 't':
+				if (falsep > 0 || nullp > 0 || truep != 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got t instead";
+					goto cleanup;
+				}
+				++truep;
+				break;
+			case 'r':
+				if (falsep > 0 || nullp > 0 || truep != 1) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got r instead";
+					goto cleanup;
+				}
+				++truep;
+				break;
+			case 'u':
+				if (falsep > 0 || (nullp != 1 && truep != 2)) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got u instead";
+					goto cleanup;
+				}
+				if (nullp != 1)
+					++truep;
+				else
+					++nullp;
+				break;
+			case 'f':
+				if (falsep != 0 || nullp > 0 || truep > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got f instead";
+					goto cleanup;
+				}
+				++falsep;
+				break;
+			case 'a':
+				if (falsep != 1 || nullp > 0 || truep > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got a instead";
+					goto cleanup;
+				}
+				++falsep;
+				break;
+			case 'l':
+				if (truep > 0 || (falsep != 2 && nullp != 2 && nullp != 3)) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got l instead";
+					goto cleanup;
+				}
+				if (falsep == 2)
+					++falsep;
+				else
+					++nullp;
+				break;
+			case 's':
+				if (falsep != 3 || nullp > 0 || truep > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got s instead";
+					goto cleanup;
+				}
+				++falsep;
+				break;
+			case 'n':
+				if (falsep > 0 || nullp != 0 || truep > 0) {
+					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got n instead";
+					goto cleanup;
+				}
+				++nullp;
+				break;
+			default:
+				prefs->error = "tokenstream: incorrect character in token stream";
+				goto cleanup;
+			}
+		}
+	}
+
+	*count = numtokens;
+	free(data->data);
+	free(data);
+	return tbuf;
+
+memerror:
+	prefs->error = "tokenstream: memory error";
+cleanup:
+	for (int i=0; i<numtokens; i++) {
+		free(tbuf[i].value);
+	}
+	free(tbuf);
+	if (data != NULL)
+		free(data->data);
+	free(data);
+	return NULL;
+}
+
+static json_value_t* deserialize(aojls_deserialization_prefs* prefs) {
+	size_t tlen = 0;
+	json_token_t* tokenstream = create_token_stream(prefs, &tlen);
+	if (tokenstream == NULL) {
+		prefs->ctx->failed = true;
+		return NULL;
+	}
+}
+
+aojls_ctx_t* aojls_deserialize(char* source, size_t len, aojls_deserialization_prefs* prefs) {
+	aojls_deserialization_prefs p;
+	if (prefs == NULL) {
+		p.ctx = NULL;
+		p.reader = NULL;
+		p.reader_data = NULL;
+	} else {
+		p = *prefs;
+	}
+
+	if (p.ctx == NULL) {
+		p.ctx = json_make_context();
+		if (p.ctx == NULL) {
+			return NULL;
+		}
+	}
+
+	bool selfbuffer = false;
+	if (p.reader == NULL) {
+		selfbuffer = true;
+		p.reader = string_reader_function;
+		string_buffer_data_t* rd = (string_buffer_data_t*)malloc(sizeof(string_buffer_data_t));
+		if (rd == NULL) {
+			p.ctx->failed = true;
+			return p.ctx;
+		}
+		rd->data = source;
+		rd->len = len;
+		rd->offset = 0;
+		p.reader_data = rd;
+	}
+
+	p.ctx->result = deserialize(&p);
+
+	if (selfbuffer) {
+		free(p.reader_data);
+	}
+
+	return p.ctx;
 }
