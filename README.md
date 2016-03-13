@@ -2,14 +2,14 @@
 
 AOJLS - "All other JSON libraries suck" is JSON parsing/generating library that is not aiming for speed or efficiency, but instead aims for programmers comfort. With this in mind, AOJLS is built on these principles:
 
-1. Creating simple and complex JSON objects should be easy and intuitive
-2. Programmer should not be bothered to track liveness of all JSON objects manually
-3. If there is any error when working with JSON object creations, it should be possible to defer error checking until next logical step
+1. Creating simple and complex JSON values should be easy and intuitive
+2. Programmer should not be bothered to track liveness of all JSON values manually
+3. If there is any error when working with JSON values, it should be possible to defer error checking until next logical step
 
 To fulfill these principles, AOJLS employs these techniques:
 
-* easy to use api for object creation and usage
-* all objects require context and their liveness is bound by it
+* easy to use api for value creation and usage
+* all values require context and their liveness is bound by it
 * in case of failure, context is marked as such and all operations on the JSON data continue to work in a fashion that they will not cause undefined behavior (however returned values might be sentinel values)
 
 ## License
