@@ -51,7 +51,7 @@ int main() {
 
 	json_object* o = json_make_object(ctx);
 	json_object_add(o, "1key1", (json_value_t*)json_from_string(ctx, "\t\n\r\\"));
-	json_object_add(o, "1key2", (json_value_t*)json_from_number(ctx, 20));
+	json_object_add(o, "1key2", (json_value_t*)json_from_number(ctx, 0.1+0.2));
 	json_object_add(o, "1key3", (json_value_t*)json_from_boolean(ctx, false));
 	json_object_add(o, "1key4", (json_value_t*)json_make_null(ctx));
 	json_object_add(root, "key6", (json_value_t*)o);
@@ -62,6 +62,7 @@ int main() {
 	p.offset_per_level = 4;
 	p.writer = NULL;
 	p.number_formatter = NULL;
+	p.number_formatter = "%.17g";
 
 	char* result = aojls_serialize((json_value_t*)root, &p);
 	printf(result);
@@ -69,6 +70,7 @@ int main() {
 
 	printf("\n\n");
 
+	p.writer = NULL;
 	p.pretty = true;
 	result = aojls_serialize((json_value_t*)root, &p);
 	printf(result);
@@ -79,6 +81,7 @@ int main() {
 	aojls_ctx_t* ctx2 = aojls_deserialize(result, strlen(result), &dp);
 	json_value_t* rr = json_context_get_result(ctx2);
 
+	p.writer = NULL;
 	char* result2 = aojls_serialize((json_value_t*)rr, &p);
 	if (strcmp(result, result2) != 0) {
 		printf(result2);

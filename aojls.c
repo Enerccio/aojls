@@ -849,7 +849,7 @@ static bool serialize(json_value_t* value, aojls_serialization_prefs* prefs) {
 	const char* eol = "";
 	char* perlinsert = "";
 	if (prefs->number_formatter == NULL) {
-		prefs->number_formatter = "%f";
+		prefs->number_formatter = "%.17g";
 	}
 	if (prefs->pretty) {
 		if (prefs->eol == NULL)
@@ -1640,12 +1640,12 @@ static bool parse_string(aojls_ctx_t* ctx, tokenizer_t* tokenizer, char** string
 }
 
 static size_t count_digits(double d) {
-	d = abs(d);
 	if (d == 0.0)
 		return 0;
 	char buffer[MAX_DOUBLE_LENGTH];
 	sprintf(buffer, "%.0f", d);
-	return strlen(buffer);
+	size_t len = strlen(buffer);
+	return d < 0 ? len-1 : len;
 }
 
 static inline double power(double x, long y) {
