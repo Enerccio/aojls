@@ -846,7 +846,7 @@ static bool do_serialize(json_value_t* value, aojls_serialization_prefs* prefs,
 }
 
 static bool serialize(json_value_t* value, aojls_serialization_prefs* prefs) {
-	char* eol = "";
+	const char* eol = "";
 	char* perlinsert = "";
 	if (prefs->number_formatter == NULL) {
 		prefs->number_formatter = "%f";
