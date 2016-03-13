@@ -31,6 +31,7 @@ int main() {
 	p.pretty = false;
 	p.offset_per_level = 4;
 	p.writer = NULL;
+	p.number_formatter = NULL;
 
 	char* result = aojls_serialize((json_value_t*)root, &p);
 	printf(result);

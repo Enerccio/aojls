@@ -790,7 +790,7 @@ static bool do_serialize(json_value_t* value, aojls_serialization_prefs* prefs,
 	case JS_NUMBER: {
 		double num = json_as_number(value, NULL);
 		char buf[MAX_DOUBLE_LENGTH];
-		sprintf(buf, "%f", num);
+		sprintf(buf, prefs->number_formatter, num);
 		return prefs->writer(buf, strlen(buf), prefs->writer_data);
 	}
 	case JS_STRING: {
@@ -816,6 +816,9 @@ static bool do_serialize(json_value_t* value, aojls_serialization_prefs* prefs,
 static bool serialize(json_value_t* value, aojls_serialization_prefs* prefs) {
 	char* eol = "";
 	char* perlinsert = "";
+	if (prefs->number_formatter == NULL) {
+		prefs->number_formatter = "%f";
+	}
 	if (prefs->pretty) {
 		if (prefs->eol == NULL)
 			eol = "\n";
@@ -1696,6 +1699,7 @@ static bool parse_int(aojls_ctx_t* ctx, tokenizer_t* tokenizer, double* num) {
 		} else {
 			*num = r;
 		}
+		free(digits);
 		return true;
 	}
 

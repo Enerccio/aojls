@@ -99,6 +99,7 @@ typedef struct {
 	bool pretty;
 	size_t offset_per_level;
 	char* eol;
+	const char* number_formatter;
 
 	writer_function_t writer;
 	void* writer_data;
