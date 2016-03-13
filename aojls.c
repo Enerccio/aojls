@@ -904,19 +904,29 @@ char* aojls_serialize(json_value_t* value, aojls_serialization_prefs* prefs) {
 	}
 
 	bool result = serialize(value, &p);
+	p.success = result;
 
 	if ((!result && selfbuffer) || (!p.writer("\0", 1, p.writer_data) && selfbuffer)) {
 		free(((string_buffer_data_t*)p.writer_data)->data);
 		free(p.writer_data);
+		if (prefs != NULL) {
+			*prefs = p;
+		}
 		return NULL;
 	}
 
 	if (selfbuffer) {
 		char* buffer = ((string_buffer_data_t*)p.writer_data)->data;
 		free(p.writer_data);
+		if (prefs != NULL) {
+			*prefs = p;
+		}
 		return buffer;
 	}
 
+	if (prefs != NULL) {
+		*prefs = p;
+	}
 	return NULL;
 }
 
@@ -1885,6 +1895,7 @@ error:
 	for (int i=0; i<tlen; i++)
 		free(tokenstream[i].value);
 	free(tokenstream);
+	prefs->ctx->failed = true;
 	return NULL;
 }
 
@@ -1924,6 +1935,10 @@ aojls_ctx_t* aojls_deserialize(char* source, size_t len, aojls_deserialization_p
 
 	if (selfbuffer) {
 		free(p.reader_data);
+	}
+
+	if (prefs != NULL) {
+		*prefs = p;
 	}
 
 	return p.ctx;
