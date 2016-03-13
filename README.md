@@ -52,7 +52,7 @@ To push new value into array, use:
 	json_array_add(array, (json_value_t*)json_value);
 ```
 
-**Warning**: You may create nested object, however any attempt to serialize those will end up with stack overflow!
+**Warning**: You may create nested objects with circles, however any attempt to serialize those will end up with stack overflow!
 
 For more operations on objects/arrays see API.
 
