@@ -43,6 +43,8 @@
 
 // private struct implementations
 
+typedef struct _aojls_alloc_node _aojls_alloc_node_t;
+
 struct _aojls_alloc_node {
 	struct _aojls_alloc_node* next;
 };
@@ -1890,6 +1892,7 @@ static json_value_t* deserialize(aojls_deserialization_prefs* prefs) {
 	for (int i=0; i<tlen; i++)
 		free(tokenstream[i].value);
 	free(tokenstream);
+	prefs->error = NULL;
 	return result;
 error:
 	for (int i=0; i<tlen; i++)

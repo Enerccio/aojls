@@ -16,6 +16,17 @@ To fulfill these principles, AOJLS employs these techniques:
 
 AOJLS is released under BSD 3.0 license. You can freerly use or modify this code, as long as you provide attribution. Author is, however, not liable for any damages for using this code.
 
+## Requirements
+
+AOJLS only requires C99 and nothing else. From C library, it only requires these headers:
+
+* `string.h`
+* `stdio.h`
+* `stdlib.h`
+* `stdbool.h`
+* `setjmp.h`
+* `float.h`
+
 ## Example usage
 
 ### Value creation
