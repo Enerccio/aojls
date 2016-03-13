@@ -1,5 +1,16 @@
 #include "aojls.h"
 
+#include <setjmp.h>
+#include <float.h>
+
+#define MAX_DOUBLE_LENGTH (4 + DBL_MANT_DIG + (-DBL_MIN_EXP))
+
+#define FAIL_ENOMEM 1
+#define FAIL_EXPECTED_PAIR 2
+#define FAIL_EXPECTED_VALUE 3
+#define FAIL_EXPECTED_EOO 4
+#define FAIL_EXPECTED_EOL 5
+
 // private struct implementations
 
 struct _aojls_alloc_node {
@@ -778,7 +789,7 @@ static bool do_serialize(json_value_t* value, aojls_serialization_prefs* prefs,
 	}
 	case JS_NUMBER: {
 		double num = json_as_number(value, NULL);
-		char buf[2048];
+		char buf[MAX_DOUBLE_LENGTH];
 		sprintf(buf, "%f", num);
 		return prefs->writer(buf, strlen(buf), prefs->writer_data);
 	}
@@ -946,6 +957,11 @@ json_token_t* create_token_stream(aojls_deserialization_prefs* prefs, size_t* co
 	if (data == NULL) {
 		goto memerror;
 	}
+	data->len = 16;
+	data->data = calloc(data->len, sizeof(char));
+	if (data->data == NULL) {
+		goto memerror;
+	}
 
 	bool in_string = false;
 	bool escaped = false;
@@ -982,7 +998,6 @@ json_token_t* create_token_stream(aojls_deserialization_prefs* prefs, size_t* co
 		}
 
 		if (readc == 0) {
-			// TODO: finish token
 			if (in_string || escaped) {
 				prefs->error = "tokenstream: eof in the middle of a token";
 				goto cleanup;
@@ -1002,6 +1017,11 @@ json_token_t* create_token_stream(aojls_deserialization_prefs* prefs, size_t* co
 				free(data);
 				data = (string_buffer_data_t*)calloc(1, sizeof(string_buffer_data_t));
 				if (data == NULL) {
+					goto memerror;
+				}
+				data->len = 16;
+				data->data = calloc(data->len, sizeof(char));
+				if (data->data == NULL) {
 					goto memerror;
 				}
 			} else {
@@ -1079,12 +1099,13 @@ json_token_t* create_token_stream(aojls_deserialization_prefs* prefs, size_t* co
 					goto cleanup;
 				}
 
-				char* str = malloc(sizeof(char));
+				char* str = malloc(sizeof(char)*2);
 				if (str == NULL) {
 					goto memerror;
 				}
 
 				str[0] = current;
+				str[1] = '\0';
 
 				if (!append_token(&tbuf, &bflen, &numtokens, str, 1, DIGIT)) {
 					goto memerror;
@@ -1276,6 +1297,511 @@ cleanup:
 	return NULL;
 }
 
+typedef struct tokenizer {
+	size_t cpos;
+	size_t total;
+	json_token_t* tokenstream;
+	jmp_buf jmppos;
+} tokenizer_t;
+
+static inline bool has_next(tokenizer_t* tokenizer) {
+	return tokenizer->cpos < tokenizer->total;
+}
+
+static inline json_token_t* next(tokenizer_t* tokenizer) {
+	if (!has_next(tokenizer)) {
+		return NULL;
+	} else
+		return &tokenizer->tokenstream[tokenizer->cpos++];
+}
+
+static inline bool next_type(tokenizer_t* tokenizer, json_token_type_t ttype) {
+	if (!has_next(tokenizer)) {
+		return false;
+	} else
+		return tokenizer->tokenstream[tokenizer->cpos].type == ttype;
+}
+
+size_t get_current_pos(tokenizer_t* tokenizer) {
+	return tokenizer->cpos;
+}
+
+static inline void set_current_pos(tokenizer_t* tokenizer, size_t cpos) {
+	tokenizer->cpos = cpos;
+}
+
+static inline void fail(tokenizer_t* tokenizer, int status) {
+	longjmp(tokenizer->jmppos, status);
+}
+
+/* parser rules */
+
+typedef struct {
+	char* key;
+	json_value_t* value;
+} _pair_t;
+
+static bool parse_value(aojls_ctx_t*, tokenizer_t*, json_value_t**);
+static bool parse_object(aojls_ctx_t*, tokenizer_t*, json_object**);
+static bool parse_members(aojls_ctx_t*, tokenizer_t*, _pair_t**, size_t*);
+static bool parse_pair(aojls_ctx_t*, tokenizer_t*, _pair_t*);
+static bool parse_array(aojls_ctx_t*, tokenizer_t*, json_array**);
+static bool parse_elements(aojls_ctx_t*, tokenizer_t*, json_value_t***, size_t*);
+static bool parse_string(aojls_ctx_t*, tokenizer_t*, char**);
+static bool parse_number(aojls_ctx_t*, tokenizer_t*, double*);
+static bool parse_int(aojls_ctx_t*, tokenizer_t*, double*);
+static bool parse_fract(aojls_ctx_t*, tokenizer_t*, double*);
+static bool parse_exp(aojls_ctx_t*, tokenizer_t*, double*);
+static bool parse_digits(aojls_ctx_t*, tokenizer_t*, char**);
+static bool parse_digit(aojls_ctx_t*, tokenizer_t*, char*);
+static bool parse_digit19(aojls_ctx_t*, tokenizer_t*, char*);
+
+static bool parse_value(aojls_ctx_t* ctx, tokenizer_t* tokenizer, json_value_t** result) {
+	size_t cprg = get_current_pos(tokenizer);
+	char* str;
+	if (parse_string(ctx, tokenizer, &str)) {
+		json_string* s = json_from_string(ctx, str);
+		if (s == NULL)
+			fail(tokenizer, FAIL_ENOMEM);
+		*result = (json_value_t*)s;
+		return true;
+	}
+	set_current_pos(tokenizer, cprg);
+	double res = 0;
+	if (parse_number(ctx, tokenizer, &res)) {
+		json_number* num = json_from_number(ctx, res);
+		if (num == NULL)
+			fail(tokenizer, FAIL_ENOMEM);
+		*result = (json_value_t*)num;
+		return true;
+	}
+	set_current_pos(tokenizer, cprg);
+	if (parse_object(ctx, tokenizer, (json_object**)result)) {
+		return true;
+	}
+	set_current_pos(tokenizer, cprg);
+	if (parse_array(ctx, tokenizer, (json_array**)result)) {
+		return true;
+	}
+	if (next_type(tokenizer, _TRUE)) {
+		next(tokenizer); // eat token
+		json_boolean* b = json_from_boolean(ctx, 1);
+		if (b == NULL)
+			fail(tokenizer, FAIL_ENOMEM);
+		*result = (json_value_t*)b;
+		return true;
+	}
+	if (next_type(tokenizer, _FALSE)) {
+		next(tokenizer); // eat token
+		json_boolean* b = json_from_boolean(ctx, 0);
+		if (b == NULL)
+			fail(tokenizer, FAIL_ENOMEM);
+		*result = (json_value_t*)b;
+		return true;
+	}
+	if (next_type(tokenizer, _NULL)) {
+		next(tokenizer); // eat token
+		json_null* n = json_make_null(ctx);
+		if (n == NULL)
+			fail(tokenizer, FAIL_ENOMEM);
+		*result = (json_value_t*)n;
+		return true;
+	}
+	*result = NULL;
+	return false;
+}
+
+static bool parse_object(aojls_ctx_t* ctx, tokenizer_t* tokenizer, json_object** object) {
+	_pair_t* pairs;
+	size_t len;
+
+	if (next_type(tokenizer, LEFT_CURLY)) {
+		next(tokenizer);
+		if (next_type(tokenizer, RIGHT_CURLY)) {
+			next(tokenizer);
+			*object = json_make_object(ctx);
+			if ((*object) == NULL)
+				fail(tokenizer, FAIL_ENOMEM);
+			return true;
+		} else if (parse_members(ctx, tokenizer, &pairs, &len)) {
+			if (!next_type(tokenizer, RIGHT_CURLY)) {
+				free(pairs);
+				fail(tokenizer, FAIL_EXPECTED_EOO);
+			}
+
+			*object = json_make_object(ctx);
+			if ((*object) == NULL) {
+				free(pairs);
+				fail(tokenizer, FAIL_ENOMEM);
+			}
+			for (int i=0; i<len; i++) {
+				_pair_t* p = &pairs[i];
+				if (json_object_add(*object, p->key, p->value) == NULL) {
+					free(pairs);
+					fail(tokenizer, FAIL_ENOMEM);
+				}
+			}
+			free(pairs);
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool parse_members(aojls_ctx_t* ctx, tokenizer_t* tokenizer, _pair_t** members, size_t* members_count) {
+	size_t bfc = 16;
+	size_t len = 0;
+	_pair_t* memb = (_pair_t*)malloc(sizeof(_pair_t)*bfc);
+	bool first = true;
+
+	do {
+		int cpgr = get_current_pos(tokenizer);
+		if (!first)
+			next(tokenizer); // eat comma
+		_pair_t pair;
+		if (!parse_pair(ctx, tokenizer, &pair)) {
+			if (!first) {
+				free(memb);
+				fail(tokenizer, FAIL_EXPECTED_PAIR);
+			}
+			set_current_pos(tokenizer, cpgr);
+			break;
+		}
+
+		if (len == bfc) {
+			size_t nbfc = bfc * 2;
+			_pair_t* nmemb = (_pair_t*)realloc(memb, sizeof(_pair_t)*nbfc);
+			if (nmemb == NULL) {
+				free(memb);
+				fail(tokenizer, FAIL_ENOMEM);
+			}
+			memb = nmemb;
+			bfc = nbfc;
+		}
+		memb[len++] = pair;
+
+		first = false;
+	} while (next_type(tokenizer, COMMA));
+
+	*members = memb;
+	*members_count = len;
+	return true;
+}
+
+static bool parse_pair(aojls_ctx_t* ctx, tokenizer_t* tokenizer, _pair_t* pair) {
+	char* str;
+	_pair_t pp;
+
+	if (!parse_string(ctx, tokenizer, &str)) {
+		return false;
+	}
+	pp.key = str;
+	if (!next_type(tokenizer, COLON)) {
+		return false;
+	}
+	next(tokenizer); // eat colon
+	if (!parse_value(ctx, tokenizer, &pp.value)) {
+		return false;
+	}
+	*pair = pp;
+	return true;
+}
+
+static bool parse_array(aojls_ctx_t* ctx, tokenizer_t* tokenizer, json_array** array) {
+	json_value_t** elements;
+	size_t len;
+
+	if (next_type(tokenizer, LEFT_SQUARE)) {
+		next(tokenizer);
+		if (next_type(tokenizer, RIGHT_SQUARE)) {
+			next(tokenizer);
+			*array = json_make_array(ctx);
+			if ((*array) == NULL)
+				fail(tokenizer, FAIL_ENOMEM);
+			return true;
+		} else if (parse_elements(ctx, tokenizer, &elements, &len)) {
+			if (!next_type(tokenizer, RIGHT_SQUARE)) {
+				free(elements);
+				fail(tokenizer, FAIL_EXPECTED_EOL);
+			}
+			next(tokenizer);
+
+			*array = json_make_array(ctx);
+			if ((*array) == NULL) {
+				free(elements);
+				fail(tokenizer, FAIL_ENOMEM);
+			}
+			for (int i=0; i<len; i++) {
+				json_value_t* v = elements[i];
+				if (json_array_add(*array, v) == NULL) {
+					free(elements);
+					fail(tokenizer, FAIL_ENOMEM);
+				}
+			}
+			free(elements);
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool parse_elements(aojls_ctx_t* ctx, tokenizer_t* tokenizer, json_value_t*** elements, size_t* size) {
+	size_t bfc = 16;
+	size_t len = 0;
+	json_value_t** elems = (json_value_t**)malloc(sizeof(json_value_t*)*bfc);
+	bool first = true;
+
+	do {
+		int cpgr = get_current_pos(tokenizer);
+		if (!first)
+			next(tokenizer); // eat comma
+		json_value_t* value;
+		if (!parse_value(ctx, tokenizer, &value)) {
+			if (!first) {
+				free(elems);
+				fail(tokenizer, FAIL_EXPECTED_VALUE);
+			}
+			set_current_pos(tokenizer, cpgr);
+			break;
+		}
+
+		if (len == bfc) {
+			size_t nbfc = bfc * 2;
+			json_value_t** nelems = (json_value_t**)realloc(elems, sizeof(json_value_t*)*nbfc);
+			if (nelems == NULL) {
+				free(elems);
+				fail(tokenizer, FAIL_ENOMEM);
+			}
+			elems = nelems;
+			bfc = nbfc;
+		}
+		elems[len++] = value;
+
+		first = false;
+	} while (next_type(tokenizer, COMMA));
+
+	*elements = elems;
+	*size = len;
+	return true;
+}
+
+static bool parse_string(aojls_ctx_t* ctx, tokenizer_t* tokenizer, char** string) {
+	if (next_type(tokenizer, STRING)) {
+		json_token_t* token = next(tokenizer);
+		*string = token->value;
+		return true;
+	}
+	return false;
+}
+
+static size_t count_digits(double d) {
+	d = abs(d);
+	if (d == 0.0)
+		return 0;
+	char buffer[MAX_DOUBLE_LENGTH];
+	sprintf(buffer, "%.0f", d);
+	return strlen(buffer);
+}
+
+static inline double power(double x, long y) {
+	double temp;
+    if (y == 0)
+       return 1;
+    temp = power(x, y/2);
+    if (y%2 == 0)
+        return temp*temp;
+    else {
+        if(y > 0)
+            return x*temp*temp;
+        else
+            return (temp*temp)/x;
+    }
+}
+
+static bool parse_number(aojls_ctx_t* ctx, tokenizer_t* tokenizer, double* num) {
+	double _int;
+	double _frac;
+	double _exp;
+	double r;
+
+	if (!parse_int(ctx, tokenizer, &_int)) {
+		return false;
+	}
+
+	size_t cpgr = get_current_pos(tokenizer);
+	if (parse_fract(ctx, tokenizer, &_frac)) {
+		size_t cpgr2 = get_current_pos(tokenizer);
+		if (parse_exp(ctx, tokenizer, &_exp)) {
+			goto compute_number;
+		} else {
+			set_current_pos(tokenizer, cpgr2);
+			_exp = 0;
+			goto compute_number;
+		}
+	}
+	set_current_pos(tokenizer, cpgr);
+	_frac = 0;
+
+	if (parse_exp(ctx, tokenizer, &_exp)) {
+		goto compute_number;
+	}
+	_exp = 0;
+compute_number:
+	r = _int;
+	size_t digitsc = count_digits(_frac);
+	if (digitsc != 0)
+		_frac = _frac/power(10.0, digitsc);
+	r += _frac;
+	if (_exp != 0) {
+		r = r*power(10.0, (long)_exp);
+	}
+	*num = r;
+	return true;
+}
+
+static bool parse_int(aojls_ctx_t* ctx, tokenizer_t* tokenizer, double* num) {
+	bool minus = false;
+	if (next_type(tokenizer, MINUS)) {
+		next(tokenizer);
+	}
+
+	size_t cpgr = get_current_pos(tokenizer);
+
+	char* digits = NULL;
+	char digit1 = 0;
+
+	if (parse_digit19(ctx, tokenizer, &digit1)) {
+		if (parse_digits(ctx, tokenizer, &digits)) {
+			char* newdigits = (char*)malloc(sizeof(char)*(strlen(digits)+2));
+			if (newdigits == NULL) {
+				free(digits);
+				fail(tokenizer, FAIL_ENOMEM);
+			}
+			newdigits[0] = digit1;
+			memcpy(newdigits+1, digits, strlen(digits)+1);
+			free(digits);
+			digits = newdigits;
+		} else {
+			digits = (char*)malloc(sizeof(char)*2);
+			if (digits == NULL) {
+				fail(tokenizer, FAIL_ENOMEM);
+			}
+			digits[0] = digit1;
+			digits[1] = '\0';
+		}
+
+		double r = strtod(digits, NULL);
+		if (minus) {
+			*num = -r;
+		} else {
+			*num = r;
+		}
+		return true;
+	}
+
+	set_current_pos(tokenizer, cpgr);
+	if (parse_digit(ctx, tokenizer, &digit1)) {
+		*num = 0.0;
+		return true;
+	}
+
+	return false;
+}
+
+static bool parse_fract(aojls_ctx_t* ctx, tokenizer_t* tokenizer, double* num) {
+	if (!next_type(tokenizer, DOT)) {
+		return false;
+	}
+
+	next(tokenizer); // eat dot
+	char* digits;
+	if (parse_digits(ctx, tokenizer, &digits)) {
+		*num = strtod(digits, NULL);
+		free(digits);
+		return true;
+	}
+
+	return false;
+}
+
+static bool parse_exp(aojls_ctx_t* ctx, tokenizer_t* tokenizer, double* num) {
+	bool minus = false;
+
+	if (next_type(tokenizer, E)) {
+		next(tokenizer); // eat e/E
+
+		if (next_type(tokenizer, PLUS)) {
+			next(tokenizer);
+		} else if (next_type(tokenizer, MINUS)) {
+			next(tokenizer);
+			minus = true;
+		}
+
+		char* digits;
+		if (parse_digits(ctx, tokenizer, &digits)) {
+			double r = strtod(digits, NULL);
+			free(digits);
+			if (minus)
+				*num = -r;
+			else
+				*num = r;
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool parse_digits(aojls_ctx_t* ctx, tokenizer_t* tokenizer, char** digits) {
+	size_t bfc = 16;
+	size_t len = 0;
+	char* buf = (char*)malloc(sizeof(char)*bfc);
+
+	do {
+		int cpgr = get_current_pos(tokenizer);
+		char digit;
+		if (!parse_digit(ctx, tokenizer, &digit)) {
+			set_current_pos(tokenizer, cpgr);
+			break;
+		}
+
+		if (len == bfc-1) {
+			size_t nbfc = bfc * 2;
+			char* nbuf = (char*)realloc(buf, sizeof(char)*nbfc);
+			if (nbuf == NULL) {
+				free(buf);
+				fail(tokenizer, FAIL_ENOMEM);
+			}
+			buf = nbuf;
+			bfc = nbfc;
+		}
+		buf[len++] = digit;
+	} while (true);
+
+	buf[len] = '\0';
+	*digits = buf;
+	return true;
+}
+
+static bool parse_digit(aojls_ctx_t* ctx, tokenizer_t* tokenizer, char* digit) {
+	if (next_type(tokenizer, DIGIT)) {
+		json_token_t* tok = next(tokenizer);
+		*digit = tok->value[0];
+		return true;
+	}
+	return false;
+}
+
+static bool parse_digit19(aojls_ctx_t* ctx, tokenizer_t* tokenizer, char* digit) {
+	if (next_type(tokenizer, DIGIT)) {
+		json_token_t* tok = next(tokenizer);
+		*digit = tok->value[0];
+		if (*digit == 0)
+			return false;
+		return true;
+	}
+	return false;
+}
+
 static json_value_t* deserialize(aojls_deserialization_prefs* prefs) {
 	size_t tlen = 0;
 	json_token_t* tokenstream = create_token_stream(prefs, &tlen);
@@ -1283,6 +1809,49 @@ static json_value_t* deserialize(aojls_deserialization_prefs* prefs) {
 		prefs->ctx->failed = true;
 		return NULL;
 	}
+
+	tokenizer_t tokenizer;
+	tokenizer.tokenstream = tokenstream;
+	tokenizer.cpos = 0;
+	tokenizer.total = tlen;
+
+	json_value_t* result;
+	int ff;
+	if ((ff = setjmp(tokenizer.jmppos)) == 0) {
+		if (!parse_value(prefs->ctx, &tokenizer, &result)) {
+			prefs->error = "failed to parse json tokenstream";
+			goto error;
+		}
+	} else {
+		switch (ff) {
+		case FAIL_ENOMEM:
+			prefs->error = "failed to parse json due to no memory";
+			break;
+		case FAIL_EXPECTED_PAIR:
+			prefs->error = "failed to parse json due to wrong token sequence, expected pair, got something else";
+			break;
+		case FAIL_EXPECTED_VALUE:
+			prefs->error = "failed to parse json due to wrong token sequence, expected value, got something else";
+			break;
+		case FAIL_EXPECTED_EOO:
+			prefs->error = "failed to parse json due to wrong token sequence, expected }, got something else";
+			break;
+		case FAIL_EXPECTED_EOL:
+			prefs->error = "failed to parse json due to wrong token sequence, expected ], got something else";
+			break;
+		}
+		goto error;
+	}
+
+	for (int i=0; i<tlen; i++)
+		free(tokenstream[i].value);
+	free(tokenstream);
+	return result;
+error:
+	for (int i=0; i<tlen; i++)
+		free(tokenstream[i].value);
+	free(tokenstream);
+	return NULL;
 }
 
 aojls_ctx_t* aojls_deserialize(char* source, size_t len, aojls_deserialization_prefs* prefs) {

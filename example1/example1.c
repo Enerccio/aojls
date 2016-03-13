@@ -48,7 +48,16 @@ int main() {
 	aojls_ctx_t* ctx2 = aojls_deserialize(result, strlen(result), &dp);
 	json_value_t* rr = json_context_get_result(ctx2);
 
+	char* result2 = aojls_serialize((json_value_t*)rr, &p);
+	if (strcmp(result, result2) != 0) {
+		printf(result2);
+		exit(-1);
+	}
+
 	json_free_context(ctx);
 	json_free_context(ctx2);
 	free(result);
+	free(result2);
+
+	printf("\nCorrect! \n");
 }
