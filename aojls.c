@@ -1487,6 +1487,7 @@ static bool parse_object(aojls_ctx_t* ctx, tokenizer_t* tokenizer, json_object**
 				}
 			}
 			free(pairs);
+			next(tokenizer);
 			return true;
 		}
 	}
