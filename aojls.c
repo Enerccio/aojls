@@ -1634,7 +1634,7 @@ static bool parse_elements(aojls_ctx_t* ctx, tokenizer_t* tokenizer, json_value_
 static bool parse_string(aojls_ctx_t* ctx, tokenizer_t* tokenizer, char** string) {
 	if (next_type(tokenizer, STRING)) {
 		json_token_t* token = next(tokenizer);
-		*string = token->value;
+		*string = append_string(ctx, token->value, token->len);
 		return true;
 	}
 	return false;
