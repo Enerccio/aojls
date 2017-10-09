@@ -1119,6 +1119,7 @@ json_token_t* create_token_stream(aojls_deserialization_prefs* prefs, size_t* co
 					break;
 				}
 				/* no break */
+            // fall through
 			case 'E':
 				if (falsep > 0 || truep > 0 || nullp > 0) {
 					prefs->error = "tokenstream: incorrect token, expected keyword continuation, got e/E instead";
@@ -1332,7 +1333,7 @@ json_token_t* create_token_stream(aojls_deserialization_prefs* prefs, size_t* co
 memerror:
 	prefs->error = "tokenstream: memory error";
 cleanup:
-	for (int i=0; i<numtokens; i++) {
+	for (size_t i=0; i<numtokens; i++) {
 		free(tbuf[i].value);
 	}
 	free(tbuf);
@@ -1479,7 +1480,7 @@ static bool parse_object(aojls_ctx_t* ctx, tokenizer_t* tokenizer, json_object**
 				free(pairs);
 				fail(tokenizer, FAIL_ENOMEM);
 			}
-			for (int i=0; i<len; i++) {
+			for (size_t i=0; i<len; i++) {
 				_pair_t* p = &pairs[i];
 				if (json_object_add(*object, p->key, p->value) == NULL) {
 					free(pairs);
@@ -1577,7 +1578,7 @@ static bool parse_array(aojls_ctx_t* ctx, tokenizer_t* tokenizer, json_array** a
 				free(elements);
 				fail(tokenizer, FAIL_ENOMEM);
 			}
-			for (int i=0; i<len; i++) {
+			for (size_t i=0; i<len; i++) {
 				json_value_t* v = elements[i];
 				if (json_array_add(*array, v) == NULL) {
 					free(elements);
@@ -1830,6 +1831,7 @@ static bool parse_digits(aojls_ctx_t* ctx, tokenizer_t* tokenizer, char** digits
 }
 
 static bool parse_digit(aojls_ctx_t* ctx, tokenizer_t* tokenizer, char* digit) {
+   (void)ctx;
 	if (next_type(tokenizer, DIGIT)) {
 		json_token_t* tok = next(tokenizer);
 		*digit = tok->value[0];
@@ -1839,6 +1841,7 @@ static bool parse_digit(aojls_ctx_t* ctx, tokenizer_t* tokenizer, char* digit) {
 }
 
 static bool parse_digit19(aojls_ctx_t* ctx, tokenizer_t* tokenizer, char* digit) {
+   (void)ctx;
 	if (next_type(tokenizer, DIGIT)) {
 		json_token_t* tok = next(tokenizer);
 		*digit = tok->value[0];
@@ -1890,13 +1893,13 @@ static json_value_t* deserialize(aojls_deserialization_prefs* prefs) {
 		goto error;
 	}
 
-	for (int i=0; i<tlen; i++)
+	for (size_t i=0; i<tlen; i++)
 		free(tokenstream[i].value);
 	free(tokenstream);
 	prefs->error = NULL;
 	return result;
 error:
-	for (int i=0; i<tlen; i++)
+	for (size_t i=0; i<tlen; i++)
 		free(tokenstream[i].value);
 	free(tokenstream);
 	prefs->ctx->failed = true;
