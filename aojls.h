@@ -228,7 +228,7 @@ json_object* json_make_object(aojls_ctx_t* ctx);
  * @warning Key must be null terminated and will be copied and stored in the context bound to the
  * JSON object!
  */
-json_object* json_object_add(json_object* o, char* key, json_value_t* value);
+json_object* json_object_add(json_object* o, const char* key, json_value_t* value);
 /**
  * @brief Adds key-value pair to this JSON object
  *
@@ -240,7 +240,7 @@ json_object* json_object_add(json_object* o, char* key, json_value_t* value);
  * @warning Key may not be null terminated and will be copied and stored in the context bound to the
  * JSON object!
  */
-json_object* json_object_nadd(json_object* o, char* key, size_t len, json_value_t* value);
+json_object* json_object_nadd(json_object* o, const char* key, size_t len, json_value_t* value);
 
 /**
  * @return number of keys in this JSON object
@@ -266,21 +266,21 @@ char* json_object_get_key(json_object* o, size_t i);
  * @param key
  * @return JSON value bound to that key or NULL in case of an error or no such key in this JSON object
  */
-json_value_t* json_object_get_object_as_value(json_object* o, char* key);
+json_value_t* json_object_get_object_as_value(json_object* o, const char* key);
 /**
  * @brief Returns JSON object bound to this key.
  * @return JSON object bound to that key or NULL in case of an error, if there is no such key or if key points to
  * other than JSON object JSON value.
  * @see json_object_get_key
  */
-json_object* json_object_get_object(json_object* o, char* key);
+json_object* json_object_get_object(json_object* o, const char* key);
 /**
  * @brief Returns JSON array bound to this key.
  * @return JSON array bound to that key or NULL in case of an error, if there is no such key or if key points to
  * other than JSON array JSON value.
  * @see json_object_get_key
  */
-json_array* json_object_get_array(json_object* o, char* key);
+json_array* json_object_get_array(json_object* o, const char* key);
 /**
  * @brief Returns double bound to this key.
  * @param o JSON object
@@ -290,7 +290,7 @@ json_array* json_object_get_array(json_object* o, char* key);
  * other than JSON number JSON value.
  * @see json_object_get_key
  */
-double json_object_get_double(json_object* o, char* key, bool* valid);
+double json_object_get_double(json_object* o, const char* key, bool* valid);
 /**
  * @brief Returns double bound to this key or default value.
  * @param o JSON object
@@ -300,7 +300,7 @@ double json_object_get_double(json_object* o, char* key, bool* valid);
  * other than JSON number JSON value.
  * @see json_object_get_key
  */
-double json_object_get_double_default(json_object* o, char* key, double defval);
+double json_object_get_double_default(json_object* o, const char* key, double defval);
 /**
  * @brief Returns string bound to this key.
  * @param o JSON object
@@ -309,7 +309,7 @@ double json_object_get_double_default(json_object* o, char* key, double defval);
  * other than JSON string JSON value.
  * @see json_object_get_key
  */
-char* json_object_get_string(json_object* o, char* key);
+char* json_object_get_string(json_object* o, const char* key);
 /**
  * @brief Returns string bound to this key or default value.
  * @param o JSON object
@@ -319,7 +319,7 @@ char* json_object_get_string(json_object* o, char* key);
  * other than JSON string JSON value.
  * @see json_object_get_key
  */
-char* json_object_get_string_default(json_object* o, char* key, char* defval);
+char* json_object_get_string_default(json_object* o, const char* key, char* defval);
 /**
  * @brief Returns boolean bound to this key.
  * @param o JSON object
@@ -329,8 +329,8 @@ char* json_object_get_string_default(json_object* o, char* key, char* defval);
  * other than JSON boolean JSON value.
  * @see json_object_get_key
  */
-bool json_object_get_bool(json_object* o, char* key, bool* valid);
-bool json_object_get_bool_default(json_object* o, char* key, bool defval);
+bool json_object_get_bool(json_object* o, const char* key, bool* valid);
+bool json_object_get_bool_default(json_object* o, const char* key, bool defval);
 /**
  * @brief Returns if null is bound for that key
  * @param o JSON object
@@ -338,7 +338,7 @@ bool json_object_get_bool_default(json_object* o, char* key, bool defval);
  * @return true if JSON null is bound to that key
  * @see json_object_get_key
  */
-bool json_object_is_null(json_object* o, char* key);
+bool json_object_is_null(json_object* o, const char* key);
 
 /* Array */
 
