@@ -248,13 +248,13 @@ json_object* json_make_object(aojls_ctx_t* ctx) {
 	return o;
 }
 
-json_object* json_object_add(json_object* o, char* key, json_value_t* value) {
+json_object* json_object_add(json_object* o, const char* key, json_value_t* value) {
 	if (key == NULL)
 		return NULL;
 	return json_object_nadd(o, key, strlen(key), value);
 }
 
-json_object* json_object_nadd(json_object* o, char* key, size_t len, json_value_t* value) {
+json_object* json_object_nadd(json_object* o, const char* key, size_t len, json_value_t* value) {
 	if (o == NULL || value == NULL || key == NULL) {
 		if (o != NULL)
 			o->self.ctx->failed = true;
@@ -305,7 +305,7 @@ char* json_object_get_key(json_object* o, size_t i) {
 	return o->keys[i];
 }
 
-json_value_t* json_object_get_object_as_value(json_object* o, char* key) {
+json_value_t* json_object_get_object_as_value(json_object* o, const char* key) {
 	if (o == NULL || key == NULL) {
 		if (o != NULL)
 			o->self.ctx->failed = true;
@@ -319,7 +319,7 @@ json_value_t* json_object_get_object_as_value(json_object* o, char* key) {
 	return NULL; // not found
 }
 
-json_object* json_object_get_object(json_object* o, char* key) {
+json_object* json_object_get_object(json_object* o, const char* key) {
 	json_value_t* value = json_object_get_object_as_value(o, key);
 	if (value == NULL) {
 		return NULL;
@@ -327,7 +327,7 @@ json_object* json_object_get_object(json_object* o, char* key) {
 	return json_as_object(value);
 }
 
-json_array* json_object_get_array(json_object* o, char* key) {
+json_array* json_object_get_array(json_object* o, const char* key) {
 	json_value_t* value = json_object_get_object_as_value(o, key);
 	if (value == NULL) {
 		return NULL;
@@ -335,7 +335,7 @@ json_array* json_object_get_array(json_object* o, char* key) {
 	return json_as_array(value);
 }
 
-double json_object_get_double(json_object* o, char* key, bool* valid) {
+double json_object_get_double(json_object* o, const char* key, bool* valid) {
 	json_value_t* value = json_object_get_object_as_value(o, key);
 	if (value == NULL) {
 		if (valid != NULL)
@@ -345,7 +345,7 @@ double json_object_get_double(json_object* o, char* key, bool* valid) {
 	return json_as_number(value, valid);
 }
 
-double json_object_get_double_default(json_object* o, char* key, double defval) {
+double json_object_get_double_default(json_object* o, const char* key, double defval) {
 	bool valid = false;
 	double result = json_object_get_double(o, key, &valid);
 	if (!valid)
@@ -353,7 +353,7 @@ double json_object_get_double_default(json_object* o, char* key, double defval) 
 	return result;
 }
 
-char* json_object_get_string(json_object* o, char* key) {
+char* json_object_get_string(json_object* o, const char* key) {
 	json_value_t* value = json_object_get_object_as_value(o, key);
 	if (value == NULL) {
 		return NULL;
@@ -361,14 +361,14 @@ char* json_object_get_string(json_object* o, char* key) {
 	return json_as_string(value);
 }
 
-char* json_object_get_string_default(json_object* o, char* key, char* defval) {
+char* json_object_get_string_default(json_object* o, const char* key, char* defval) {
 	char* value = json_object_get_string(o, key);
 	if (value == NULL)
 		value = defval;
 	return value;
 }
 
-bool json_object_get_bool(json_object* o, char* key, bool* valid) {
+bool json_object_get_bool(json_object* o, const char* key, bool* valid) {
 	json_value_t* value = json_object_get_object_as_value(o, key);
 	if (value == NULL) {
 		if (valid != NULL)
@@ -378,7 +378,7 @@ bool json_object_get_bool(json_object* o, char* key, bool* valid) {
 	return json_as_bool(value, valid);
 }
 
-bool json_object_get_bool_default(json_object* o, char* key, bool defval) {
+bool json_object_get_bool_default(json_object* o, const char* key, bool defval) {
 	bool valid = false;
 	bool result = json_object_get_bool(o, key, &valid);
 	if (!valid)
@@ -386,7 +386,7 @@ bool json_object_get_bool_default(json_object* o, char* key, bool defval) {
 	return result;
 }
 
-bool json_object_is_null(json_object* o, char* key) {
+bool json_object_is_null(json_object* o, const char* key) {
 	json_value_t* value = json_object_get_object_as_value(o, key);
 	return json_is_null(value);
 }
